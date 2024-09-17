@@ -1,0 +1,19 @@
+cabal-version:   3.0
+name:            pong
+version:         0.1.0.0
+license:         MIT
+license-file:    LICENSE
+maintainer:      info@infinitecoder.org
+author:          InfiniteCoder01
+category:        Game
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+executable pong
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:
+        base ^>=4.18.2.1,
+        h-raylib

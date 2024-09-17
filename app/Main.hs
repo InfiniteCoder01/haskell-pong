@@ -5,14 +5,15 @@
 
 module Main where
 
+import Data.Fixed
 import Raylib.Core
   ( initWindow, setTargetFPS, windowShouldClose, closeWindow,
     getRenderWidth, getRenderHeight, getFrameTime, getRandomValue,
-    isKeyDown,
+    isKeyDown, isKeyPressed,
     clearBackground
   )
 import Raylib.Types.Core (KeyboardKey(..))
-import Raylib.Core.Text (drawFPS)
+import Raylib.Core.Text (drawFPS, drawText, measureText)
 import Raylib.Types (pattern Vector2, Vector2, vector2'x, vector2'y)
 import Raylib.Util (raylibApplication, drawing, WindowResources)
 import Raylib.Core.Shapes (drawRectangleV, drawCircleV)
@@ -28,10 +29,12 @@ data AppState = AppState {
   p2y :: Float,
   p2v :: Float,
   ball :: Vector2,
-  ballDir :: Vector2
+  ballDir :: Vector2,
+
+  ai :: AI
 }
 
-data AI = Simple | Pred | Crazy deriving (Show)
+data AI = Simple | Pred | Crazy deriving (Eq, Enum, Bounded, Show)
 
 startup :: IO AppState
 startup = do
@@ -45,11 +48,13 @@ startup = do
     p2y = 0,
     p2v = 0,
     ball = Vector2 (-1) (-1),
-    ballDir = Vector2 0 0
+    ballDir = Vector2 0 0,
+
+    ai = Simple
   }
 
 mainLoop :: AppState -> IO AppState
-mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir } = do
+mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir, ai } = do
   iwidth <- getRenderWidth
   iheight <- getRenderHeight
   let (width, height) = ((fromIntegral iwidth), (fromIntegral iheight))
@@ -70,6 +75,14 @@ mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir } = do
         (fromIntegral dx * 2 - 1)
         (fromIntegral dy / 128.0 * 0.8)
     else return $ ballDir
+
+  ai <- do
+    next <- isKeyPressed KeyOne
+    return $ if next
+      then if ai == maxBound
+             then minBound
+             else succ ai
+      else ai
   
   
   drawing $ do
@@ -85,29 +98,51 @@ mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir } = do
         for (\y -> do
           drawRectangleV (Vector2 ((width - lineWidth) / 2) y) (Vector2 lineWidth lineLen) white)
           [0, spacing + lineLen..height]
-    drawFPS 10 20
+    drawFPS 10 10
     drawRectangleV (Vector2 paddlePadding p1y) paddleSize white
     drawRectangleV (Vector2 (width - paddlePadding - vector2'x paddleSize) p2y) paddleSize white
     drawCircleV ball ballRadius white
 
+    let fontSize = round $ height / 16.0
+    aitw <- measureText (show ai) fontSize
+    drawText (show ai) (iwidth - aitw - 10) 10 fontSize white
+
   deltaTime <- getFrameTime
-  let paddleSpeed = height * deltaTime
-  let paddleAISpeed = paddleSpeed * 0.7
+  let paddleSpeed = height
+  let paddleAISpeed = paddleSpeed * 1.0
   let ballSpeed = height * 0.4 * deltaTime
   let paddleBallVelocityTransfer = 1.4
-  let paddleBounds = \x v -> if x + v < 0 then (0, 0) else if x + v > height - vector2'y paddleSize then (height - vector2'y paddleSize, 0) else (x + v, v)
+  let paddleBounds = \x v -> let vv = v * deltaTime in if x + vv < 0 then (0, 0) else if x + vv > height - vector2'y paddleSize then (height - vector2'y paddleSize, 0) else (x + vv, v)
   let paddleAccBlend = 1.0 - 0.05 ** deltaTime
+  let ballBounceK = -1.1
 
   -- Left Paddle (player)
   up <- isKeyDown KeyW
   down <- isKeyDown KeyS
-  let tp1v = (fromIntegral (fromEnum down - fromEnum up)) * paddleSpeed
+  let tp1v = (fromIntegral $ fromEnum down - fromEnum up) * paddleSpeed
   p1v <- return $ p1v + (tp1v - p1v) * paddleAccBlend
   (p1y, p1v) <- return $ paddleBounds p1y p1v
 
   -- Right Paddle (AI)
-  let delta = vector2'y ball - p2y - vector2'y paddleSize / 2
-  let tp2v = max (-paddleAISpeed) $ min paddleAISpeed delta
+  let (ballCrossY, ballCrossT) = if vector2'x ballDir > 0
+        then let
+          bx = vector2'x ball + ballRadius
+          px = width - paddlePadding - vector2'x paddleSize
+          xDistance = px - bx
+          ballIntersectionY = vector2'y ball + xDistance / (vector2'x ballDir) * vector2'y ballDir
+          screenSpaceBallIntersectionY = Data.Fixed.mod' ballIntersectionY height
+        in
+          ((if odd (floor (ballIntersectionY / height) :: Int)
+          then height - screenSpaceBallIntersectionY
+          else screenSpaceBallIntersectionY), xDistance / vector2'x ballDir / ballSpeed * deltaTime)
+        else (0/0, 0/0)
+  
+  let target = case ai of
+        Simple -> vector2'y ball
+        Pred -> ballCrossY
+        Crazy -> if ballCrossT < abs (ballCrossY - p2y - vector2'y paddleSize / 2) / paddleAISpeed * 1.8 then ballCrossY - (p2y - ballCrossY) else 0/0
+  let delta = if isNaN target then 0 else target - p2y - vector2'y paddleSize / 2
+  let tp2v = max (-paddleAISpeed) $ min paddleAISpeed $ delta / deltaTime
   p2v <- return $ p2v + (tp2v - p2v) * paddleAccBlend
   (p2y, p2v) <- return $ paddleBounds p2y p2v
 
@@ -126,7 +161,7 @@ mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir } = do
     && vector2'y ball + ballRadius > p1y
     && vector2'x ball - ballRadius < paddlePadding + vector2'x paddleSize
     && vector2'x ball + ballRadius > paddlePadding)
-    then (Vector2 (paddlePadding + vector2'x paddleSize + ballRadius) $ vector2'y ball, Vector2 1.0 $ p1v / paddleSpeed * paddleBallVelocityTransfer)
+    then (Vector2 (paddlePadding + vector2'x paddleSize + ballRadius) $ vector2'y ball, Vector2 (vector2'x ballDir * ballBounceK) $ p1v / paddleSpeed * paddleBallVelocityTransfer)
     else (ball, ballDir)
 
   (ball, ballDir) <- return $ if
@@ -134,7 +169,7 @@ mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir } = do
     && vector2'y ball + ballRadius > p2y
     && vector2'x ball - ballRadius < width - paddlePadding
     && vector2'x ball + ballRadius > width - paddlePadding - vector2'x paddleSize)
-    then (Vector2 (width - paddlePadding - vector2'x paddleSize - ballRadius) $ vector2'y ball, Vector2 (-1.0) $ p2v / paddleSpeed * paddleBallVelocityTransfer)
+    then (Vector2 (width - paddlePadding - vector2'x paddleSize - ballRadius) $ vector2'y ball, Vector2 (vector2'x ballDir * ballBounceK) $ p2v / paddleSpeed * paddleBallVelocityTransfer)
     else (ball, ballDir)
 
   -- Sides
@@ -152,7 +187,8 @@ mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir } = do
     p2y = p2y,
     p2v = p2v,
     ball = ball,
-    ballDir = ballDir
+    ballDir = ballDir,
+    ai = ai
   }
 
 shouldClose :: AppState -> IO Bool

@@ -24,10 +24,15 @@ for c xs = foldl (\a b -> a >> b) (pure ()) (map c xs)
 
 data AppState = AppState {
   window :: WindowResources,
+
   p1y :: Float,
   p1v :: Float,
+  p1s :: Int,
+
   p2y :: Float,
   p2v :: Float,
+  p2s :: Int,
+
   ball :: Vector2,
   ballDir :: Vector2,
 
@@ -43,10 +48,15 @@ startup = do
 
   return AppState {
     window,
+
     p1y = 0,
     p1v = 0,
+    p1s = 0,
+
     p2y = 0,
     p2v = 0,
+    p2s = 0,
+
     ball = Vector2 (-1) (-1),
     ballDir = Vector2 0 0,
 
@@ -54,7 +64,7 @@ startup = do
   }
 
 mainLoop :: AppState -> IO AppState
-mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir, ai } = do
+mainLoop state@AppState { p1y, p1v, p1s, p2y, p2v, p2s, ball, ballDir, ai } = do
   iwidth <- getRenderWidth
   iheight <- getRenderHeight
   let (width, height) = ((fromIntegral iwidth), (fromIntegral iheight))
@@ -104,8 +114,14 @@ mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir, ai } = do
     drawCircleV ball ballRadius white
 
     let fontSize = round $ height / 16.0
-    aitw <- measureText (show ai) fontSize
-    drawText (show ai) (iwidth - aitw - 10) 10 fontSize white
+    textWidth <- measureText (show ai) fontSize
+    drawText (show ai) (iwidth - textWidth - 10) 10 fontSize white
+    fontSize <- return $ fontSize * 2
+    textWidth <- measureText (show p1s) fontSize
+    drawText (show p1s) (round (width / 4 - fromIntegral textWidth / 2) - 10) 10 fontSize white
+    textWidth <- measureText (show p2s) fontSize
+    drawText (show p2s) (round (width / 4 * 3 - fromIntegral textWidth / 2) - 10) 10 fontSize white
+
 
   deltaTime <- getFrameTime
   let paddleSpeed = height
@@ -173,21 +189,26 @@ mainLoop state@AppState { p1y, p1v, p2y, p2v, ball, ballDir, ai } = do
     else (ball, ballDir)
 
   -- Sides
-  (ball, ballDir) <- return $ if vector2'x ball + ballRadius > width
-    then (Vector2 (-1) (-1), Vector2 0 0)
-    else (ball, ballDir)
-  (ball, ballDir) <- return $ if vector2'x ball - ballRadius < 0
-    then (Vector2 (-1) (-1), Vector2 0 0)
-    else (ball, ballDir)
+  (ball, ballDir, p1s) <- return $ if vector2'x ball + ballRadius > width
+    then (Vector2 (-1) (-1), Vector2 0 0, p1s + 1)
+    else (ball, ballDir, p1s)
+  (ball, ballDir, p2s) <- return $ if vector2'x ball - ballRadius < 0
+    then (Vector2 (-1) (-1), Vector2 0 0, p2s + 1)
+    else (ball, ballDir, p2s)
 
   ball <- return $ if (ball == (Vector2 (-1) (-1))) then ((Vector2 width height) / (Vector2 2.0 2.0)) else ball
   return state {
     p1y = p1y,
     p1v = p1v,
+    p1s = p1s,
+    
     p2y = p2y,
     p2v = p2v,
+    p2s = p2s,
+    
     ball = ball,
     ballDir = ballDir,
+
     ai = ai
   }
 

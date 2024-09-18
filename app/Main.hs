@@ -7,12 +7,12 @@ module Main where
 
 import Data.Fixed
 import Raylib.Core
-  ( initWindow, setTargetFPS, windowShouldClose, closeWindow,
+  ( setConfigFlags, initWindow, setTargetFPS, windowShouldClose, closeWindow,
     getRenderWidth, getRenderHeight, getFrameTime, getRandomValue,
-    isKeyDown, isKeyPressed,
+    isKeyDown, isKeyPressed, getMouseY,
     clearBackground
   )
-import Raylib.Types.Core (KeyboardKey(..))
+import Raylib.Types.Core (KeyboardKey(..), ConfigFlag(WindowResizable))
 import Raylib.Core.Text (drawFPS, drawText, measureText)
 import Raylib.Types (pattern Vector2, Vector2, vector2'x, vector2'y)
 import Raylib.Util (raylibApplication, drawing, WindowResources)
@@ -36,13 +36,16 @@ data AppState = AppState {
   ball :: Vector2,
   ballDir :: Vector2,
 
-  ai :: AI
+  ai :: AI,
+  controls :: Controls
 }
 
 data AI = Simple | Pred | Crazy deriving (Eq, Enum, Bounded, Show)
+data Controls = Keyboard | Mouse deriving (Eq, Enum, Bounded, Show)
 
 startup :: IO AppState
 startup = do
+  setConfigFlags [WindowResizable]
   window <- initWindow 640 480 "Pong"
   setTargetFPS 60
 
@@ -60,11 +63,12 @@ startup = do
     ball = Vector2 (-1) (-1),
     ballDir = Vector2 0 0,
 
-    ai = Simple
+    ai = Simple,
+    controls = Keyboard
   }
 
 mainLoop :: AppState -> IO AppState
-mainLoop state@AppState { p1y, p1v, p1s, p2y, p2v, p2s, ball, ballDir, ai } = do
+mainLoop state@AppState { p1y, p1v, p1s, p2y, p2v, p2s, ball, ballDir, ai, controls } = do
   iwidth <- getRenderWidth
   iheight <- getRenderHeight
   let (width, height) = ((fromIntegral iwidth), (fromIntegral iheight))
@@ -94,6 +98,13 @@ mainLoop state@AppState { p1y, p1v, p1s, p2y, p2v, p2s, ball, ballDir, ai } = do
              else succ ai
       else ai
   
+  controls <- do
+    next <- isKeyPressed KeyTwo
+    return $ if next
+      then if controls == maxBound
+             then minBound
+             else succ controls
+      else controls
   
   drawing $ do
     clearBackground black
@@ -116,11 +127,14 @@ mainLoop state@AppState { p1y, p1v, p1s, p2y, p2v, p2s, ball, ballDir, ai } = do
     let fontSize = round $ height / 16.0
     textWidth <- measureText (show ai) fontSize
     drawText (show ai) (iwidth - textWidth - 10) 10 fontSize white
+    textWidth <- measureText (show controls) fontSize
+    drawText (show controls) (iwidth - textWidth - 10) (fontSize + 15) fontSize white
+
     fontSize <- return $ fontSize * 2
     textWidth <- measureText (show p1s) fontSize
-    drawText (show p1s) (round (width / 4 - fromIntegral textWidth / 2) - 10) 10 fontSize white
+    drawText (show p1s) (round (width / 8 * 3 - fromIntegral textWidth / 2) - 10) 10 fontSize white
     textWidth <- measureText (show p2s) fontSize
-    drawText (show p2s) (round (width / 4 * 3 - fromIntegral textWidth / 2) - 10) 10 fontSize white
+    drawText (show p2s) (round (width / 8 * 5 - fromIntegral textWidth / 2) - 10) 10 fontSize white
 
 
   deltaTime <- getFrameTime
@@ -128,14 +142,26 @@ mainLoop state@AppState { p1y, p1v, p1s, p2y, p2v, p2s, ball, ballDir, ai } = do
   let paddleAISpeed = paddleSpeed * 1.0
   let ballSpeed = height * 0.4 * deltaTime
   let paddleBallVelocityTransfer = 1.4
-  let paddleBounds = \x v -> let vv = v * deltaTime in if x + vv < 0 then (0, 0) else if x + vv > height - vector2'y paddleSize then (height - vector2'y paddleSize, 0) else (x + vv, v)
+  let paddleBounds = \x v -> let
+        vd = v * deltaTime
+        in
+        if x + vd < 0 then (0, 0) else if x + vd > height - vector2'y paddleSize
+            then (height - vector2'y paddleSize, 0)
+            else (x + vd, v)
   let paddleAccBlend = 1.0 - 0.05 ** deltaTime
   let ballBounceK = -1.1
 
   -- Left Paddle (player)
-  up <- isKeyDown KeyW
-  down <- isKeyDown KeyS
-  let tp1v = (fromIntegral $ fromEnum down - fromEnum up) * paddleSpeed
+  tp1v <- case controls of
+        Keyboard -> do
+          up <- isKeyDown KeyW
+          down <- isKeyDown KeyS
+          return $ (fromIntegral $ fromEnum down - fromEnum up) * paddleSpeed
+        Mouse -> do
+          mouse <- getMouseY
+          mouse <- return $ fromIntegral mouse
+          let delta = mouse - p1y - vector2'y paddleSize / 2
+          return $ delta / deltaTime
   p1v <- return $ p1v + (tp1v - p1v) * paddleAccBlend
   (p1y, p1v) <- return $ paddleBounds p1y p1v
 
@@ -189,12 +215,12 @@ mainLoop state@AppState { p1y, p1v, p1s, p2y, p2v, p2s, ball, ballDir, ai } = do
     else (ball, ballDir)
 
   -- Sides
-  (ball, ballDir, p1s) <- return $ if vector2'x ball + ballRadius > width
-    then (Vector2 (-1) (-1), Vector2 0 0, p1s + 1)
-    else (ball, ballDir, p1s)
   (ball, ballDir, p2s) <- return $ if vector2'x ball - ballRadius < 0
     then (Vector2 (-1) (-1), Vector2 0 0, p2s + 1)
     else (ball, ballDir, p2s)
+  (ball, ballDir, p1s) <- return $ if vector2'x ball + ballRadius > width
+    then (Vector2 (-1) (-1), Vector2 0 0, p1s + 1)
+    else (ball, ballDir, p1s)
 
   ball <- return $ if (ball == (Vector2 (-1) (-1))) then ((Vector2 width height) / (Vector2 2.0 2.0)) else ball
   return state {
@@ -209,7 +235,8 @@ mainLoop state@AppState { p1y, p1v, p1s, p2y, p2v, p2s, ball, ballDir, ai } = do
     ball = ball,
     ballDir = ballDir,
 
-    ai = ai
+    ai = ai,
+    controls = controls
   }
 
 shouldClose :: AppState -> IO Bool
